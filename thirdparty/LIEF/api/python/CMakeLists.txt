@@ -1,0 +1,159 @@
+if (LIEF_PRECOMPILED)
+  if (LIEF_PY_LIEF_EXT_SHARED)
+    find_package(LIEF REQUIRED COMPONENTS SHARED)
+  else()
+    find_package(LIEF REQUIRED COMPONENTS STATIC)
+  endif()
+  message(STATUS "Using pre-installed version of LIEF")
+  set(LIEF_TARGET LIEF::LIEF)
+  set_target_properties(LIB_LIEF PROPERTIES EXCLUDE_FROM_ALL ON)
+else()
+  set(LIEF_TARGET LIB_LIEF)
+endif()
+
+include(FetchContent)
+
+if (LIEF_EXTERNAL_NANOBIND)
+  find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
+  find_package(nanobind REQUIRED)
+else()
+  set(NANOBIND_VERSION 2.13.0.r26.g6eeef765)
+  set(NANOBIND_SHA256 SHA256=43e5912518c889e206e3e01915d2fb5be0cd13f4d2afae2ae80941c1be4e3d7e)
+  set(NANOBIND_URL "${THIRD_PARTY_DIRECTORY}/nanobind-${NANOBIND_VERSION}.zip"
+      CACHE STRING "URL to the Nanobind")
+  FetchContent_Declare(nanobind
+    URL        ${NANOBIND_URL}
+    URL_HASH   ${NANOBIND_SHA256}
+  )
+  FetchContent_MakeAvailable(nanobind)
+  find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
+  find_package(nanobind REQUIRED PATHS ${nanobind_SOURCE_DIR}/cmake
+               NO_DEFAULT_PATH)
+endif()
+
+
+message(STATUS "Python version:     ${Python_VERSION}")
+message(STATUS "Python lib:         ${Python_LIBRARIES}")
+message(STATUS "Python include:     ${Python_INCLUDE_DIRS}")
+message(STATUS "Python interpreter: ${Python_EXECUTABLE}")
+
+set(NANOBIND_OPT
+  NB_STATIC
+  NOMINSIZE
+)
+
+if (LIEF_PYTHON_STABLE_ABI)
+  message(STATUS "Stable ABI enabled")
+  list(APPEND NANOBIND_OPT STABLE_ABI)
+endif()
+
+if (LIEF_PYTHON_FREE_THREADED)
+  message(STATUS "Free threading enabled")
+  list(APPEND NANOBIND_OPT FREE_THREADED)
+endif()
+
+if (LIEF_PYTHON_STATIC)
+  list(APPEND NANOBIND_OPT NB_EXT_STATIC ON)
+endif()
+
+nanobind_add_module(
+  pyLIEF
+  ${NANOBIND_OPT}
+
+  NB_SUPPRESS_WARNINGS
+
+  src/pyLIEF.cpp
+)
+
+add_subdirectory(src)
+
+set_target_properties(pyLIEF PROPERTIES
+  POSITION_INDEPENDENT_CODE    ON
+  CXX_STANDARD                 17
+  CXX_STANDARD_REQUIRED        ON
+  CXX_VISIBILITY_PRESET        hidden
+  C_VISIBILITY_PRESET          hidden
+  PREFIX                       ""
+  OUTPUT_NAME                  "_lief"
+)
+
+
+if (LIEF_EXTRA_FLAGS)
+  target_compile_options(pyLIEF PRIVATE ${LIEF_EXTRA_FLAGS})
+endif()
+
+if (MSVC AND NOT CLANG_CL AND NOT LIEF_EXTERNAL_SPDLOG)
+  target_compile_definitions(pyLIEF PRIVATE FMT_UNICODE=0)
+endif()
+
+target_link_libraries(pyLIEF PUBLIC ${LIEF_TARGET} lief_spdlog)
+
+target_precompile_headers(pyLIEF PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/pylief-pch.hpp
+)
+
+if(APPLE)
+  set_target_properties(pyLIEF PROPERTIES
+    MACOSX_RPATH ON
+    LINK_FLAGS   "-undefined dynamic_lookup "
+  )
+endif()
+
+
+if (UNIX OR MUSL)
+  if (LIEF_PYTHON_STATIC)
+    set_target_properties(pyLIEF PROPERTIES SUFFIX ".a")
+  else()
+    # Even on osx (c.f. EXT_SUFFIX from sysconfig)
+    set_target_properties(pyLIEF PROPERTIES SUFFIX ".so")
+  endif()
+elseif(WIN32)
+  if (LIEF_PYTHON_STATIC)
+    set_target_properties(pyLIEF PROPERTIES SUFFIX ".lib")
+  else()
+    set_target_properties(pyLIEF PROPERTIES SUFFIX ".pyd")
+  endif()
+endif()
+
+
+if (WIN32)
+  target_link_libraries(pyLIEF PUBLIC ${PYTHON_LIBRARIES} bcrypt)
+endif()
+
+if (ANDROID)
+  target_link_libraries(pyLIEF PUBLIC Python::Module)
+endif()
+
+if(SKBUILD)
+  if(LIEF_PYTHON_EDITABLE)
+    install(TARGETS pyLIEF LIBRARY DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/lief)
+  else()
+    install(TARGETS pyLIEF LIBRARY DESTINATION ${SKBUILD_PLATLIB_DIR}/lief/)
+  endif()
+endif()
+
+if (LIEF_ASAN)
+  target_link_libraries(pyLIEF INTERFACE libclang_rt.asan.so)
+endif()
+
+if (LIEF_TSAN)
+  target_link_libraries(pyLIEF INTERFACE libclang_rt.tsan.so)
+endif()
+
+if (LIEF_PYTHON_STATIC)
+  set(NANOBIND_TARGET nanobind-static)
+  if (LIEF_PYTHON_STABLE_ABI)
+    set(NANOBIND_TARGET nanobind-static-abi3)
+  endif()
+  install(TARGETS ${NANOBIND_TARGET} pyLIEF
+          DESTINATION lib/python-${Python_VERSION})
+
+  install(
+    DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/lief
+    DESTINATION lib/python/typing
+    FILES_MATCHING
+    REGEX "(.*).(pyi)$")
+
+  install(DIRECTORY ${NB_DIR}/include/
+          DESTINATION include/)
+endif()

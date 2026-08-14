@@ -1,0 +1,15 @@
+Acknowledgements
+----------------
+
+LIEF makes use of the following open source projects:
+
+ - mbedTLS - https://tls.mbed.org/
+ - nanobind - https://github.com/wjakob/nanobind
+ - json - https://nlohmann.github.io/json/
+ - spdlog - https://github.com/gabime/spdlog
+ - Catch2 - https://github.com/catchorg/Catch2
+ - utf8-cpp - https://sourceforge.net/projects/utfcpp/
+ - llvm - http://llvm.org/ - For the formats enums and structures
+ - virtualbox - https://www.virtualbox.org/ - For the PE 'LoadConfiguration' structures
+
+The logo is designed by Freepik
