@@ -1,0 +1,72 @@
+name: Build And Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+
+          - os: windows-latest
+            platform: windows-x64
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+
+      - name: Setup CMake
+        uses: lukka/get-cmake@latest
+
+      - name: Setup MSBuild (Windows)
+        if: runner.os == 'Windows'
+        uses: microsoft/setup-msbuild@v3
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=${{ github.workspace }}/rel -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=${{ github.workspace }}/rel
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: BinPatch_${{ matrix.platform }}
+          path: rel/
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: BinPatch_*
+          merge-multiple: true
+          path: rel
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: rel/*
+    
