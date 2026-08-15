@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 4.2)
+cmake_minimum_required(VERSION 3.16)
 project(BinPatch)
 include(CheckIPOSupported)
 
@@ -67,5 +67,5 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     LIEF::LIEF
     keystone
     yaml-cpp
-	Zydis::Zydis    
+    Zydis::Zydis    
 )

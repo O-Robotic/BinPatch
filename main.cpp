@@ -658,7 +658,7 @@ static void ProcessDataPatch(LIEF::PE::Binary& binary, const YAML::Node& dataDef
 
         if (offset + newString.size() + 1 > sectionSpan.size())
         {
-            fprintf(stderr, "Bad offset for section %s, section size is %llu offset was %zu\n", section.c_str(), section.size(), offset);
+            fprintf(stderr, "Bad offset for section %s, section size is %zu offset was %zu\n", section.c_str(), section.size(), offset);
             return;
         }
 

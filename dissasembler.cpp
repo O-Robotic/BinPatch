@@ -2,6 +2,7 @@
 #include <format>
 #include <map>
 #include <Zydis/Formatter.h>
+#include <inttypes.h>
 
 extern bool g_bDebug;
 
@@ -23,7 +24,7 @@ static ZyanStatus MemPrintHook(const ZydisFormatter* pFormatter, ZydisFormatterB
         char tmp[32];
 
         ZYAN_CHECK(ZydisCalcAbsoluteAddress(pContext->instruction, pOp, pContext->runtime_address, &realAddress));
-        snprintf(tmp, sizeof(tmp), " (0x%llx)", realAddress);
+        snprintf(tmp, sizeof(tmp), " (0x%" PRIX64 ")", realAddress);
         ZYAN_CHECK(ZydisFormatterBufferAppend(pFormatBuffer, ZYDIS_TOKEN_SYMBOL));
         ZYAN_CHECK(ZydisFormatterBufferGetString(pFormatBuffer, &pString));
         ZYAN_CHECK(ZyanStringViewInsideBuffer(&view, tmp));
@@ -43,7 +44,7 @@ static ZyanStatus ImmPrintHook(const ZydisFormatter* pFormatter, ZydisFormatterB
         ZyanStringView view;
         char tmp[32];
         tmp[31] = '\0';
-        snprintf(tmp, sizeof(tmp), " [rel%u]", pOp->imm.size);
+        snprintf(tmp, sizeof(tmp), " [rel%" PRIu8 "]", pOp->imm.size);
 
         ZYAN_CHECK(ZydisFormatterBufferAppend(pFormatBuffer, ZYDIS_TOKEN_SYMBOL));
         ZYAN_CHECK(ZydisFormatterBufferGetString(pFormatBuffer, &pString));
@@ -54,7 +55,7 @@ static ZyanStatus ImmPrintHook(const ZydisFormatter* pFormatter, ZydisFormatterB
         {
             ZyanU64 realAddress;
             ZYAN_CHECK(ZydisCalcAbsoluteAddress(pContext->instruction, pOp, pContext->runtime_address, &realAddress));
-            snprintf(tmp, sizeof(tmp), " (0x%llx)", realAddress);
+            snprintf(tmp, sizeof(tmp), " (0x%" PRIX64 ")", realAddress);
 
             ZYAN_CHECK(ZydisFormatterBufferAppend(pFormatBuffer, ZYDIS_TOKEN_SYMBOL));
             ZYAN_CHECK(ZydisFormatterBufferGetString(pFormatBuffer, &pString));
@@ -208,11 +209,11 @@ const char* ZyanStatusToString(ZyanStatus status)
     {
         static char buf[256];
         buf[255] = '\0';
-        snprintf(buf, sizeof(buf), "Unknown status (0x%08X, module=%u, code=%u)",
+        snprintf(buf, sizeof(buf), "Unknown status (0x%08" PRIX32 "), module=%" PRIX32 ", code=%" PRIX32 ")",
             status, ZYAN_STATUS_MODULE(status), ZYAN_STATUS_CODE(status));
         return buf;
     }
-    }
+    } 
 }
 
 std::vector<uint8_t> Disassembler::RelocateInstructions(const std::vector<uint8_t>& bytes, uint64_t originalVA, uint64_t newVA) const

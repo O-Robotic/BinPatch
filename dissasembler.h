@@ -1,5 +1,5 @@
 #pragma once
-#include "zydis/Zydis.h"
+#include "Zydis/Zydis.h"
 #include <string>
 #include <span>
 #include <vector>

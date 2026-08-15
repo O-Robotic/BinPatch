@@ -29,7 +29,7 @@ std::optional<std::vector<uint8_t>> Assembler::Assemble(const char* const pszAsm
 
     if (ret != 0)
     {
-        fprintf(stderr, "Failed to assemble code err: %s\nFailed statement idx %llu\n", ks_strerror(ks_errno(m_pEngine)), nStatements);
+        fprintf(stderr, "Failed to assemble code err: %s\nFailed statement idx %zu\n", ks_strerror(ks_errno(m_pEngine)), nStatements);
         ks_free(pEncodeBuffer);
         return std::nullopt;
     }
