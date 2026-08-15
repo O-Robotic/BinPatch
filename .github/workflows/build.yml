@@ -76,6 +76,7 @@ jobs:
           path: rel
 
       - name: Create Release
+        tag_name: ${{ env.VERSION }}
         uses: softprops/action-gh-release@v3
         with:
           files: rel/*
