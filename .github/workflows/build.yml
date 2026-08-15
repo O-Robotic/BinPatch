@@ -42,11 +42,20 @@ jobs:
       - name: Setup CMake
         uses: lukka/get-cmake@latest
 
+      - name: Install Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
       - name: Setup MSBuild (Windows)
         if: runner.os == 'Windows'
         uses: microsoft/setup-msbuild@v3
 
-      - name: Configure
+      - name: Configure Linux
+        if: runner.os == 'Linux'
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=${{ github.workspace }}/rel
+
+      - name: Configure Windows
+        if: runner.os == 'Windows'
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=${{ github.workspace }}/rel -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=${{ github.workspace }}/rel
 
       - name: Build
