@@ -1,6 +1,13 @@
 name: Build And Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version of the release"
+        required: true
+        type: string
+
   push:
     tags:
       - 'v*'
@@ -56,6 +63,9 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
+
+    env:
+      VERSION: ${{ inputs.version || github.ref_name }}
 
     steps:
       - name: Download artifacts
