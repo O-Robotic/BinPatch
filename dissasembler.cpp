@@ -84,7 +84,7 @@ Disassembler::Disassembler()
     g_pfnDefaultFormatOperandImm = (ZydisFormatterFunc)pNewCallback;
 }
 
-size_t Disassembler::GetStolenByteCount(std::span<const uint8_t> data, uint64_t requiredSize = 5) const 
+std::optional<size_t> Disassembler::GetStolenByteCount(std::span<const uint8_t> data, uint64_t requiredSize = 5) const 
 {
     ZydisDecodedInstruction instruction;
     ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
@@ -96,8 +96,8 @@ size_t Disassembler::GetStolenByteCount(std::span<const uint8_t> data, uint64_t 
     {
         if (!ZYAN_SUCCESS(ZydisDecoderDecodeFull(&decoder, data.data() + offset, length - offset, &instruction, operands)))
         {
-            printf(__FUNCTION__" Failed to decode instruction\n");
-            return size_t(-1);
+            printf("Disassembler::GetStolenByteCount: Failed to decode instruction\n");
+            return std::nullopt;
         }
 
         offset += instruction.length;
@@ -114,7 +114,7 @@ size_t Disassembler::GetStolenByteCount(std::span<const uint8_t> data, uint64_t 
                 {
                     const uint64_t padByteOffset = offset + i;
                     if (padByteOffset >= data.size()) {
-                        return size_t(-1);
+                        return std::nullopt;
                     }
 
                     padByte = data[padByteOffset];
@@ -128,7 +128,7 @@ size_t Disassembler::GetStolenByteCount(std::span<const uint8_t> data, uint64_t 
                 if (!isSafePadding)
                 {
                     printf("Not enough room for added instruction.\n");
-                    return size_t(-1);
+                    return std::nullopt;
                 }
             }
         }
@@ -136,7 +136,7 @@ size_t Disassembler::GetStolenByteCount(std::span<const uint8_t> data, uint64_t 
 
     if (offset < requiredSize)
     {
-        return size_t(-1);
+        return std::nullopt;
     }
 
     return offset;
@@ -238,7 +238,7 @@ std::vector<uint8_t> Disassembler::RelocateInstructions(const std::vector<uint8_
         if (reqStatus != ZYAN_STATUS_SUCCESS)
         {
             char errBuff[256];
-            printf(__FUNCTION__" Failed to create encoder request err: %s\n", ZyanStatusToString(reqStatus));
+            printf("Disassembler::RelocateInstructions: Failed to create encoder request err: %s\n", ZyanStatusToString(reqStatus));
             if (!ZYAN_SUCCESS(ZydisFormatterFormatInstruction(&formatter, &instruction, operands, instruction.operand_count_visible, errBuff, sizeof(errBuff), originalVA + readOffset, ZYAN_NULL)))
             {
                 return {};

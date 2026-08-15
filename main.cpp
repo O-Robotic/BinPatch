@@ -6,6 +6,7 @@
 #include <span>
 #include <format>
 #include <filesystem>
+#include <cstdint>
 
 #include "pattern_utils.h"
 #include "assembler.h"
@@ -17,6 +18,7 @@
 #include "LIEF/PE/Binary.hpp"
 #include "LIEF/PE/Section.hpp"
 #include "LIEF/PE/Import.hpp"
+#include <inttypes.h>
 
 #include "thirdparty/yaml-cpp/include/yaml-cpp/yaml.h"
 #include <regex>
@@ -175,12 +177,13 @@ public:
         const size_t window = std::min<size_t>(assembled.size() + 16, sectionRemaining);
         const std::span<const uint8_t> patchableBytes = { pPatchAddress, window };
 
-        const size_t result = disassembler.GetStolenByteCount(patchableBytes, assembled.size());
-        if (result == -1)
+        const std::optional<size_t> result = disassembler.GetStolenByteCount(patchableBytes, assembled.size());
+        
+        if (!result)
             return false;
 
         patch.m_nPatchVA = patchVA;
-        patch.m_PatchBytes.assign(result, 0x90);
+        patch.m_PatchBytes.assign(*result, 0x90);
         memcpy(patch.m_PatchBytes.data(), assembled.data(), assembled.size());
 
         patches.push_back(patch);
@@ -203,11 +206,11 @@ public:
         const size_t window = std::min<size_t>(5 + 16, sectionRemaining);
         const std::span<const uint8_t> patchableBytes = { pPatchAddress, window };
 
-        const size_t res = disassembler.GetStolenByteCount(patchableBytes, 5);
-        if (res == -1)
+        const std::optional<size_t> res = disassembler.GetStolenByteCount(patchableBytes, 5);
+        if (!res)
             return false;
 
-        std::vector<uint8_t> stolenBytesVec(pPatchAddress, pPatchAddress + res);
+        std::vector<uint8_t> stolenBytesVec(pPatchAddress, pPatchAddress + *res);
 
         size_t reloactedSize = 0;
         if (bKeepStolenInstructions)
@@ -359,11 +362,11 @@ static void AddImportEntry(LIEF::PE::Import& import_, const YAML::Node& entry)
 
         if (ordinal < 1 || ordinal > UINT16_MAX)
         {
-            fprintf(stderr, "Invalid ordinal specified for entry %lu\n", ordinal);
+            fprintf(stderr, "Invalid ordinal specified for entry %" PRIu32 "\n", ordinal);
             return;
         }
 
-        printf("Adding import entry with ordinal %lu\n", ordinal);
+        printf("Adding import entry with ordinal %" PRIu32 "\n", ordinal);
         LIEF::PE::ImportEntry importEntry((1ull << 63) | ordinal, LIEF::PE::PE_TYPE::PE32_PLUS);
         import_.add_entry(importEntry);
     }
@@ -398,17 +401,17 @@ static void RemoveImportEntry(LIEF::PE::Import& import_, const YAML::Node& entry
 
         if (ordinal < 1 || ordinal > UINT16_MAX)
         {
-            fprintf(stderr, "Invalid ordinal specified for entry %lu\n", ordinal);
+            fprintf(stderr, "Invalid ordinal specified for entry %" PRIu32 "\n", ordinal);
             return;
         }
 
         if (import_.remove_entry(ordinal))
         {
-            printf("Removed import entry with ordinal %lu\n", ordinal);
+            printf("Removed import entry with ordinal %" PRIu32 "\n", ordinal);
         }
         else
         {
-            printf("Failed to remove import entry with ordinal %lu\n", ordinal);
+            printf("Failed to remove import entry with ordinal %" PRIu32 "\n", ordinal);
         }
     }
     else
@@ -600,13 +603,13 @@ static void ProcessExportAdd(LIEF::PE::Binary& binary, const YAML::Node& exportD
     if (bNameSpecified)
     {
         std::string exportName = exportDef["name"].as<std::string>();
-        printf("Adding export: Name: %s RVA: 0x%10lx\n", exportName.c_str(), rva);
+        printf("Adding export: Name: %s RVA: 0x%10" PRIX32 "\n", exportName.c_str(), rva);
         pExports->add_entry(LIEF::PE::ExportEntry(exportName, rva));
     }
     else
     {
         uint16_t ordinal = exportDef["ordinal"].as<uint16_t>();
-        printf("Adding export: Ordinal: %hu RVA: 0x%10lx\n", ordinal, rva);
+        printf("Adding export: Ordinal: %hu RVA: 0x%10" PRIX32 "\n", ordinal, rva);
         LIEF::PE::ExportEntry exportEntry;
         exportEntry.ordinal(ordinal);
         exportEntry.address(rva);
@@ -655,7 +658,7 @@ static void ProcessDataPatch(LIEF::PE::Binary& binary, const YAML::Node& dataDef
 
         if (offset + newString.size() + 1 > sectionSpan.size())
         {
-            fprintf(stderr, "Bad offset for section %s, section size is %llu offset was %llu\n", section.c_str(), section.size(), offset);
+            fprintf(stderr, "Bad offset for section %s, section size is %llu offset was %zu\n", section.c_str(), section.size(), offset);
             return;
         }
 
@@ -680,7 +683,7 @@ int main(int argc, char** argv)
     std::string outputPath;
     std::string patchFilePath;
 
-    for (size_t i = 1; i < argc - 1; i++)
+    for (int i = 1; i < argc - 1; i++)
     {
         const char* const pszArg = argv[i];
         if (strcmp(pszArg, "-input") == 0)
