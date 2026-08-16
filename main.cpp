@@ -23,6 +23,8 @@
 #include "thirdparty/yaml-cpp/include/yaml-cpp/yaml.h"
 #include <regex>
 
+#define BP_ALIGN_UP(val, align) (((val) + (align) - 1) & ~((align) - 1))
+
 bool g_bDebug = false;
 
 struct CodePatch {
@@ -38,7 +40,6 @@ struct TrampolinePatch
     std::vector<uint8_t> m_StolenBytes;
     std::string m_PatchASM;
     uint64_t m_nPatchVA = 0;
-    uint64_t m_nOffsetInCaveSection = 0;
     size_t m_nCaveSize = 0;
     StolenByteRestorePos m_RestorePos;
     bool m_bJumpBack;
@@ -61,7 +62,7 @@ static LIEF::PE::Section* AllocateCaveSection(LIEF::PE::Binary& binary, size_t t
 struct CodePatchCtx
 {
 public:
-    explicit CodePatchCtx(LIEF::PE::Binary& bin) : binary(bin) {
+    explicit CodePatchCtx(LIEF::PE::Binary& bin) : m_LoadedPE(bin) {
     }
 
     bool SetupCodePatch(const YAML::Node& patchJson)
@@ -71,7 +72,7 @@ public:
         const std::string_view mode = patchJson["mode"].as<std::string_view>();
 
         LIEF::PE::Section* section = nullptr;
-        for (auto& sectionItr : binary.sections()) {
+        for (auto& sectionItr : m_LoadedPE.sections()) {
             if (sectionItr.name() == segmentName) {
                 section = &sectionItr;
                 break;
@@ -107,7 +108,7 @@ public:
         }
 
         const uint64_t offset = static_cast<uint64_t>(pPatchAddress - sectionData.data());
-        const uint64_t patchVA = binary.imagebase() + section->virtual_address() + offset;
+        const uint64_t patchVA = m_LoadedPE.imagebase() + section->virtual_address() + offset;
         const size_t sectionRemaining = sectionData.size() - offset;
 
         if (mode == "replace")
@@ -162,7 +163,7 @@ public:
     {
         CodePatch patch;
 
-        const std::optional<std::vector<uint8_t>> assembledRes = assembler.Assemble(pszPatchASM, patchVA);
+        const std::optional<std::vector<uint8_t>> assembledRes = m_Assembler.Assemble(pszPatchASM, patchVA);
         if (!assembledRes)
             return false;
 
@@ -170,14 +171,14 @@ public:
 
         if (g_bDebug)
         {
-            const std::string printed = disassembler.PrintInstructions(assembled, patchVA);
+            const std::string printed = m_Dissasembler.PrintInstructions(assembled, patchVA);
             std::cout << printed << std::endl;
         }
        
         const size_t window = std::min<size_t>(assembled.size() + 16, sectionRemaining);
         const std::span<const uint8_t> patchableBytes = { pPatchAddress, window };
 
-        const std::optional<size_t> result = disassembler.GetStolenByteCount(patchableBytes, assembled.size());
+        const std::optional<size_t> result = m_Dissasembler.GetStolenByteCount(patchableBytes, assembled.size());
         
         if (!result)
             return false;
@@ -186,7 +187,7 @@ public:
         patch.m_PatchBytes.assign(*result, 0x90);
         memcpy(patch.m_PatchBytes.data(), assembled.data(), assembled.size());
 
-        patches.push_back(patch);
+        m_InlinePatches.push_back(patch);
         return true;
     }
 
@@ -196,7 +197,7 @@ public:
         TrampolinePatch tp;
         tp.m_PatchASM = std::move(patchASM);
 
-        const std::optional<std::vector<uint8_t>> assembledRes = assembler.Assemble(tp.m_PatchASM.c_str(), patchVA);
+        const std::optional<std::vector<uint8_t>> assembledRes = m_Assembler.Assemble(tp.m_PatchASM.c_str(), patchVA);
 
         if (!assembledRes)
             return false;
@@ -206,7 +207,7 @@ public:
         const size_t window = std::min<size_t>(5 + 16, sectionRemaining);
         const std::span<const uint8_t> patchableBytes = { pPatchAddress, window };
 
-        const std::optional<size_t> res = disassembler.GetStolenByteCount(patchableBytes, 5);
+        const std::optional<size_t> res = m_Dissasembler.GetStolenByteCount(patchableBytes, 5);
         if (!res)
             return false;
 
@@ -215,33 +216,32 @@ public:
         size_t reloactedSize = 0;
         if (bKeepStolenInstructions)
         {
-            const std::vector<uint8_t> relocated = disassembler.RelocateInstructions(stolenBytesVec, patchVA, patchVA + 16);
+            const std::vector<uint8_t> relocated = m_Dissasembler.RelocateInstructions(stolenBytesVec, patchVA, patchVA + 16);
             reloactedSize = relocated.size();
         }
 
+        //Rough size guess for jump back
         const size_t caveSize = reloactedSize + assembled.size() + 5;
-        const size_t alignedOffset = (lastCaveOffset + 15) & ~size_t(15);
+        const size_t alignedOffset = BP_ALIGN_UP(m_nEstimatedCaveSize, 16);
 
         tp.m_nPatchVA = patchVA;
         tp.m_StolenBytes = std::move(stolenBytesVec);
-        tp.m_nOffsetInCaveSection = alignedOffset;
-        tp.m_nCaveSize = caveSize;
         tp.m_bJumpBack = bJumpBack;
         tp.m_bKeepStolenInstructions = bKeepStolenInstructions;
         tp.m_RestorePos = restorePos;
 
-        lastCaveOffset = alignedOffset + caveSize;
-        trampolinePatches.push_back(tp);
+        m_nEstimatedCaveSize = alignedOffset + caveSize;
+        m_TrampolinePatches.push_back(tp);
         return true;
     }
 
-    inline LIEF::PE::Binary& Binary() { return binary; }
+    inline LIEF::PE::Binary& Binary() { return m_LoadedPE; }
 
     bool ApplyInlinePatches() const
     {
-        for (auto& patch : patches)
+        for (auto& patch : m_InlinePatches)
         {
-            binary.patch_address(patch.m_nPatchVA, patch.m_PatchBytes, LIEF::Binary::VA_TYPES::VA);
+            m_LoadedPE.patch_address(patch.m_nPatchVA, patch.m_PatchBytes, LIEF::Binary::VA_TYPES::VA);
         }
 
         return true;
@@ -249,18 +249,19 @@ public:
 
     bool ApplyTrampolinePatches() const
     {
-        const size_t totalCaveSize = trampolinePatches.empty() ? 0
-            : trampolinePatches.back().m_nOffsetInCaveSection + trampolinePatches.back().m_nCaveSize;
-
-        if (totalCaveSize == 0)
+        if (m_TrampolinePatches.empty() || !m_nEstimatedCaveSize)
             return true;
 
-        LIEF::PE::Section* caveSection = AllocateCaveSection(binary, totalCaveSize);
-        const uint64_t caveBaseVA = binary.imagebase() + caveSection->virtual_address();
+        //Rough estimate of the size since after relocation the size might change
+        LIEF::PE::Section* caveSection = AllocateCaveSection(m_LoadedPE, m_nEstimatedCaveSize);
+        const uint64_t caveBaseVA = m_LoadedPE.imagebase() + caveSection->virtual_address();
 
-        for (auto& patch : trampolinePatches)
+        auto writableSpan = caveSection->writable_content();
+        size_t nCaveOffset = 0;
+
+        for (auto& patch : m_TrampolinePatches)
         {
-            const uint64_t caveVA = caveBaseVA + patch.m_nOffsetInCaveSection;
+            const uint64_t caveVA = caveBaseVA + nCaveOffset;
 
             std::vector<uint8_t> body;
 
@@ -270,11 +271,11 @@ public:
 
                 if (patch.m_bKeepStolenInstructions)
                 {
-                    relocated = disassembler.RelocateInstructions(patch.m_StolenBytes, patch.m_nPatchVA, caveVA);
+                    relocated = m_Dissasembler.RelocateInstructions(patch.m_StolenBytes, patch.m_nPatchVA, caveVA);
                 }
 
                 const uint64_t injectedVA = caveVA + relocated.size();
-                const std::optional<std::vector<uint8_t>> assembledRes = assembler.Assemble(patch.m_PatchASM.c_str(), injectedVA);
+                const std::optional<std::vector<uint8_t>> assembledRes = m_Assembler.Assemble(patch.m_PatchASM.c_str(), injectedVA);
                 if (!assembledRes)
                     return false;
 
@@ -283,13 +284,13 @@ public:
             }
             else
             {
-                const std::optional<std::vector<uint8_t>> injectedRes = assembler.Assemble(patch.m_PatchASM.c_str(), caveVA);
+                std::optional<std::vector<uint8_t>> injectedRes = m_Assembler.Assemble(patch.m_PatchASM.c_str(), caveVA);
                 const uint64_t relocatedVA = caveVA + injectedRes->size();
 
                 std::vector<uint8_t> relocated;
                 if (patch.m_bKeepStolenInstructions)
                 {
-                    relocated = disassembler.RelocateInstructions(patch.m_StolenBytes, patch.m_nPatchVA, relocatedVA);
+                    relocated = m_Dissasembler.RelocateInstructions(patch.m_StolenBytes, patch.m_nPatchVA, relocatedVA);
 
                     if (relocated.empty())
                     {
@@ -310,17 +311,25 @@ public:
                 body.push_back(0xE9);
                 const int32_t rel = static_cast<int32_t>(backTarget - (jmpSite + 5));
                 uint8_t relBytes[4];
-                std::memcpy(relBytes, &rel, 4);
+                memcpy(relBytes, &rel, 4);
                 body.insert(body.end(), relBytes, relBytes + sizeof(relBytes));
             }
 
-            binary.patch_address(caveVA, body);
+            if (nCaveOffset + body.size() > writableSpan.size())
+            {
+                caveSection->reserve(nCaveOffset + body.size(), 0xCC);
+                writableSpan = caveSection->writable_content();
+            }
+
+            assert(writableSpan.data() + nCaveOffset + body.size() <= writableSpan.end());
+            memcpy(writableSpan.data() + nCaveOffset, body.data(), body.size());
+            nCaveOffset = BP_ALIGN_UP(body.size() + nCaveOffset, 16);
 
             std::vector<uint8_t> jumpOut(patch.m_StolenBytes.size(), 0x90);
             jumpOut[0] = 0xE9;
             const int32_t outRel = static_cast<int32_t>(caveVA - (patch.m_nPatchVA + 5));
             memcpy(&jumpOut[1], &outRel, sizeof(outRel));
-            binary.patch_address(patch.m_nPatchVA, jumpOut);
+            m_LoadedPE.patch_address(patch.m_nPatchVA, jumpOut);
         }
 
         return true;
@@ -337,12 +346,12 @@ public:
     }
 
 private:
-    LIEF::PE::Binary& binary;
-    std::vector<CodePatch> patches;
-    std::vector<TrampolinePatch> trampolinePatches;
-    Disassembler disassembler;
-    Assembler assembler;
-    uint64_t lastCaveOffset = 0;
+    LIEF::PE::Binary& m_LoadedPE;
+    std::vector<CodePatch> m_InlinePatches;
+    std::vector<TrampolinePatch> m_TrampolinePatches;
+    Disassembler m_Dissasembler;
+    Assembler m_Assembler;
+    uint64_t m_nEstimatedCaveSize = 0;
 };
 
 static void AddImportEntry(LIEF::PE::Import& import_, const YAML::Node& entry)
@@ -786,7 +795,7 @@ int main(int argc, char** argv)
         return EXIT_FAILURE;
     }
 
-    const YAML::Node patches = patchFile["patches"];
+    const YAML::Node m_InlinePatches = patchFile["patches"];
 
     CodePatchCtx patch_context(*pe);
 
@@ -819,7 +828,7 @@ int main(int argc, char** argv)
 
     bool bPatchSuccessful = true; 
 
-    for (auto& patch : patches) {
+    for (auto& patch : m_InlinePatches) {
         
         const std::string_view patchOp = patch["type"].as<std::string_view>();
 
