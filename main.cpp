@@ -654,16 +654,23 @@ static void ProcessDataPatch(LIEF::PE::Binary& binary, const YAML::Node& dataDef
 
     if (bHasStringPatch)
     {
-        std::string newString = dataDef["string"].as<std::string>();
+        bool bNullTerminate = true;
+        if (dataDef.contains("nullterm") && !dataDef["nullterm"].as<bool>())
+        {
+            bNullTerminate = false;
+        }
 
-        if (offset + newString.size() + 1 > sectionSpan.size())
+        const std::string newString = dataDef["string"].as<std::string>();
+        const size_t nBytesToCopy = bNullTerminate ? newString.size() + 1 : newString.size();
+
+        if (offset + nBytesToCopy > sectionSpan.size())
         {
             fprintf(stderr, "Bad offset for section %s, section size is %zu offset was %zu\n", section.c_str(), section.size(), offset);
             return;
         }
 
-        uint8_t* pPatchPoint = &sectionSpan[offset];
-        std::memcpy(pPatchPoint, newString.c_str(), newString.size() + 1);
+        uint8_t* const pPatchPoint = &sectionSpan[offset];
+        std::memcpy(pPatchPoint, newString.c_str(), nBytesToCopy);
     }
     else if (dataDef["bytes"])
     {
@@ -672,6 +679,30 @@ static void ProcessDataPatch(LIEF::PE::Binary& binary, const YAML::Node& dataDef
         uint8_t* pPatchPoint = &sectionSpan[offset];
         std::memcpy(pPatchPoint, data.data(), data.size());
     }
+}
+
+static bool UpdateChecksumOnDisk(const std::string& path, uint32_t checksum) {
+    std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
+    if (!file || !file.good()) {
+        return false;
+    }
+
+    uint32_t e_lfanew = 0;
+    file.seekg(0x3C, std::ios::beg);
+    file.read(reinterpret_cast<char*>(&e_lfanew), sizeof(e_lfanew));
+    if (!file) {
+        return false;
+    }
+
+    const uint32_t checksum_offset = e_lfanew + 88;
+
+    file.seekp(checksum_offset, std::ios::beg);
+    file.write(reinterpret_cast<const char*>(&checksum), sizeof(checksum));
+    if (!file) {
+        return false;
+    }
+
+    return true;
 }
 
 int main(int argc, char** argv) 
@@ -818,9 +849,18 @@ int main(int argc, char** argv)
     config.imports = true;
     config.exports = true;
 
-    pe->optional_header().remove(LIEF::PE::OptionalHeader::DLL_CHARACTERISTICS::DYNAMIC_BASE);
-    pe->compute_checksum();
+    pe->optional_header().checksum(0);
     pe->write(outputPath, config);
+
+    uint32_t checksum = 0;
+
+    {
+        auto written = LIEF::PE::Parser::parse(outputPath);
+        checksum = written->compute_checksum();
+    }
+
+    
+    UpdateChecksumOnDisk(outputPath, checksum);
 
     return EXIT_SUCCESS;    
 }
