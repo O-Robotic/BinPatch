@@ -353,13 +353,16 @@ struct X86Operand : public MCParsedAsmOperand {
     return isMemOffs() && Mem.ModeSize == 32 && (!Mem.Size || Mem.Size == 64);
   }
   bool isMemOffs64_8() const {
-    return isMemOffs() && Mem.ModeSize == 64 && (!Mem.Size || Mem.Size == 8);
+    //return isMemOffs() && Mem.ModeSize == 64 && (!Mem.Size || Mem.Size == 8);
+      return false;
   }
   bool isMemOffs64_16() const {
-    return isMemOffs() && Mem.ModeSize == 64 && (!Mem.Size || Mem.Size == 16);
+    //return isMemOffs() && Mem.ModeSize == 64 && (!Mem.Size || Mem.Size == 16);
+      return false;
   }
   bool isMemOffs64_32() const {
-    return isMemOffs() && Mem.ModeSize == 64 && (!Mem.Size || Mem.Size == 32);
+    //return isMemOffs() && Mem.ModeSize == 64 && (!Mem.Size || Mem.Size == 32);
+      return false;
   }
   bool isMemOffs64_64() const {
       //This is pretty hacky and should be fixed, we return false here to force RIP relative resolution
