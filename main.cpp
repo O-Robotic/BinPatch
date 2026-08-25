@@ -317,7 +317,10 @@ public:
 
             if (nCaveOffset + body.size() > writableSpan.size())
             {
-                caveSection->reserve(nCaveOffset + body.size(), 0xCC);
+                size_t nNewSize = BP_ALIGN_UP(nCaveOffset + body.size(), 512);
+                caveSection->reserve(nNewSize, 0xCC);
+                caveSection->size(nNewSize);
+                caveSection->virtual_size((uint32_t)nNewSize);
                 writableSpan = caveSection->writable_content();
             }
 
