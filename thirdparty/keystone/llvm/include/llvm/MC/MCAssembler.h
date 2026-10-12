@@ -59,13 +59,15 @@ class MCAssembler {
   friend class MCAsmLayout;
   mutable unsigned KsError;
   mutable void *KsSymResolver;
+  mutable void* KsSymResolverUserData;
 
 public:
   void setError(unsigned E) const { KsError = E; }
   unsigned getError() const { return KsError; }
 
-  void setSymResolver(void *h) const { KsSymResolver = h; }
+  void setSymResolver(void* h, void* pUserData) const { KsSymResolver = h; KsSymResolverUserData = pUserData; }
   void *getSymResolver() const { return KsSymResolver; }
+  void *getSymResolverUserData() const { return KsSymResolverUserData; }
 
   typedef std::vector<MCSection *> SectionListType;
   typedef std::vector<const MCSymbol *> SymbolDataListType;

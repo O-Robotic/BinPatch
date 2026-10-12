@@ -521,7 +521,7 @@ unsigned int MCObjectStreamer::FinishImpl()
   //MCDwarfLineTable::Emit(this, getAssembler().getDWARFLinetableParams());
 
   flushPendingLabels(nullptr);
-  getAssembler().setSymResolver(getSymResolver());
+  getAssembler().setSymResolver(getSymResolver(), getSymResolverUserData());
   getAssembler().Finish(KsError);
 
   return KsError;

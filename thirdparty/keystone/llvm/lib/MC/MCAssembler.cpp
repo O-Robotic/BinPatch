@@ -206,7 +206,7 @@ bool MCAssembler::evaluateFixup(const MCAsmLayout &Layout,
         if (KsSymResolver) {
             uint64_t imm;
             ks_sym_resolver resolver = (ks_sym_resolver)KsSymResolver;
-            if (resolver(Sym.getName().str().c_str(), &imm)) {
+            if (resolver(getSymResolverUserData(), Sym.getName().str().c_str(), &imm)) {
                 // resolver handled this symbol
                 Value = imm;
                 IsResolved = true;

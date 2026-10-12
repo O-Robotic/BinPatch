@@ -167,7 +167,7 @@ typedef enum ks_err {
 
 // To register the resolver, pass its function address to ks_option(), using
 // option KS_OPT_SYM_RESOLVER. For example, see samples/sample.c.
-typedef bool (*ks_sym_resolver)(const char *symbol, uint64_t *value);
+typedef bool (*ks_sym_resolver)(void* pUserData, const char *symbol, uint64_t *value);
 
 // Runtime option for the Keystone engine
 typedef enum ks_opt_type {
@@ -297,6 +297,9 @@ const char *ks_strerror(ks_err code);
 KEYSTONE_EXPORT
 ks_err ks_option(ks_engine *ks, ks_opt_type type, size_t value);
 
+
+KEYSTONE_EXPORT
+void ks_setsymbolcallback(ks_engine* ks, ks_sym_resolver pfnCallback, void* pUserData);
 
 /*
  Assemble a string given its the buffer, size, start address and number

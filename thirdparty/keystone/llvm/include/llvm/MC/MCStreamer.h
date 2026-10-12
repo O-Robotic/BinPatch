@@ -157,6 +157,7 @@ private:
 ///
 class MCStreamer {
   mutable void *KsSymResolver;
+  mutable void *KsSymResolverUserData;
   MCContext &Context;
   std::unique_ptr<MCTargetStreamer> TargetStreamer;
 
@@ -198,8 +199,9 @@ protected:
 public:
   virtual ~MCStreamer();
 
-  void setSymResolver(void *h) const { KsSymResolver = h; }
+  void setSymResolver(void* h, void* pUserData) const { KsSymResolver = h; KsSymResolverUserData = pUserData; }
   void *getSymResolver() const { return KsSymResolver; }
+  void *getSymResolverUserData() const { return KsSymResolverUserData; }
 
   void visitUsedExpr(const MCExpr &Expr);
   virtual void visitUsedSymbol(const MCSymbol &Sym);

@@ -348,6 +348,11 @@ public:
         return true;
     }
 
+    inline bool RegisterSymbol(std::string symbolName, uint64_t symbolValue)
+    {
+        return m_Assembler.RegisterSymbol(std::move(symbolName), symbolValue);
+    }
+
 private:
     LIEF::PE::Binary& m_LoadedPE;
     std::vector<CodePatch> m_InlinePatches;
@@ -831,11 +836,31 @@ int main(int argc, char** argv)
 
     bool bPatchSuccessful = true; 
 
+
+    if (patchFile.contains("symbols") && patchFile["symbols"].IsMap())
+    {
+        const YAML::Node symbols = patchFile["symbols"];
+        for (const auto& symbol : symbols)
+        {
+            const std::string& symbolName = symbol.first.Scalar();
+            uint64_t symbolValue = symbol.second.as<uint64_t>();
+            if (!patch_context.RegisterSymbol(symbolName, symbolValue))
+            {
+                printf("Failed to register symbol %s\n", symbolName.c_str());
+            }
+            else
+            {
+                printf("Adding symbol %s value %" PRIX64 "\n", symbolName.c_str(), symbolValue);
+            }
+        }
+    }
+
     for (auto& patch : m_InlinePatches) {
         
         const std::string_view patchOp = patch["type"].as<std::string_view>();
 
         if (patchOp == "code") {
+            
             if (!patch_context.SetupCodePatch(patch))
             {
                 bPatchSuccessful = false;

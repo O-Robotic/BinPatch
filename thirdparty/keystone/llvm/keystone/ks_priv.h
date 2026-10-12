@@ -58,6 +58,7 @@ struct ks_struct {
     MCSubtargetInfo *STI = nullptr;
     MCObjectFileInfo MOFI;
     ks_sym_resolver sym_resolver = nullptr;
+    void* sym_resolver_user_data = nullptr;
 
     ks_struct(ks_arch arch, int mode, unsigned int errnum, ks_opt_value syntax)
         : arch(arch), mode(mode), errnum(errnum), syntax(syntax) { }

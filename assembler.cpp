@@ -8,6 +8,8 @@ Assembler::Assembler()
     {
         m_pEngine = nullptr;
     }
+
+    ks_setsymbolcallback(m_pEngine, ksSymResolveCallback, this);
 }
 
 Assembler::~Assembler()
@@ -37,4 +39,32 @@ std::optional<std::vector<uint8_t>> Assembler::Assemble(const char* const pszAsm
     std::vector<uint8_t> bytes(pEncodeBuffer, pEncodeBuffer + nEncodeSize);
     ks_free(pEncodeBuffer);
     return bytes;
+}
+
+std::optional<uint64_t> Assembler::FindSymbol(const char* const pszSymbol)
+{
+    const auto it = m_PreResolvedSymbols.find(pszSymbol);
+    if (it == m_PreResolvedSymbols.end())
+        return std::nullopt;
+    return it->second;
+}
+
+bool Assembler::RegisterSymbol(std::string symbolName, uint64_t value)
+{
+    if (m_PreResolvedSymbols.contains(symbolName))
+        return false;
+
+    m_PreResolvedSymbols.insert({ std::move(symbolName), value });
+    return true;
+}
+
+bool Assembler::ksSymResolveCallback(void* pUserData, const char* pszSymName, uint64_t* pValue)
+{
+    Assembler* const pAssembler = reinterpret_cast<Assembler*>(pUserData);
+    const auto symbol = pAssembler->FindSymbol(pszSymName);
+    if (!symbol)
+        return false;
+
+    *pValue = *symbol;
+    return true;
 }

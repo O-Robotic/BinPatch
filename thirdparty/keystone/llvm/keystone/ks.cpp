@@ -590,6 +590,12 @@ ks_err ks_option(ks_engine *ks, ks_opt_type type, size_t value)
     return KS_ERR_OPT_INVALID;
 }
 
+KEYSTONE_EXPORT
+void ks_setsymbolcallback(ks_engine* ks, ks_sym_resolver pfnCallback, void* pUserData)
+{
+    ks->sym_resolver = pfnCallback;
+    ks->sym_resolver_user_data = pUserData;
+}
 
 KEYSTONE_EXPORT
 void ks_free(unsigned char *p)
@@ -661,7 +667,7 @@ int ks_asm(ks_engine *ks,
     ks->SrcMgr.clearBuffers();
     ks->SrcMgr.AddNewSourceBuffer(std::move(*BufferPtr), SMLoc());
 
-    Streamer->setSymResolver((void *)(ks->sym_resolver));
+    Streamer->setSymResolver((void *)(ks->sym_resolver), ks->sym_resolver_user_data);
 
     MCAsmParser *Parser = createMCAsmParser(ks->SrcMgr, Ctx, *Streamer, *ks->MAI);
     if (!Parser) {
