@@ -59,7 +59,6 @@ static LIEF::PE::Section* AllocateCaveSection(LIEF::PE::Binary& binary, size_t t
     return added;
 }
 
-
 struct CodePatchCtx
 {
 public:
@@ -77,7 +76,7 @@ public:
         {
             fprintf(stderr, "Invalid patch segment def\n");
             return false;
-            }
+        }
 
         if (!YamlGetString(patchJson, "patch", patchASM) || patchASM.empty())
         {
@@ -106,23 +105,20 @@ public:
 
         auto sectionData = pSection->writable_content();
 
-        const uint8_t* pPatchAddress = nullptr;
-        if (patchJson["sig"]) {
-            const std::string_view sig = patchJson["sig"].as<std::string_view>();
-            const auto [bytes, mask] = PatternToMaskedBytes(sig);
-            pPatchAddress = FindPattern(sectionData, bytes, mask);
+        const uint8_t* pPatchAddress = nullptr;        
+        const auto [bytes, mask] = PatternToMaskedBytes(sig);
+        pPatchAddress = FindPattern(sectionData, bytes, mask);
 
-            if (!pPatchAddress)
-            {
+        if (!pPatchAddress)
+        {
             std::cout << std::format("Could not find pattern [{}] in segment {}", sig, segment) << std::endl;
-                return false;
-            }
-            else
-            {
-                std::cout << std::format("Building code patch for [{}]", sig) << std::endl;
-            }
+            return false;
         }
-
+        else
+        {
+            std::cout << std::format("Building code patch for [{}]", sig) << std::endl;
+        }
+        
 
         if (!pPatchAddress) {
             return false;
@@ -151,20 +147,8 @@ public:
             {
                 if(byteRestorePosStr == "trailing") {
                     byteRestorePos = StolenByteRestorePos::Trailing;
+                }
             }
-
-            if (patchJson["keep_stolen"])
-            {
-                bKeepStolen = patchJson["keep_stolen"].as<bool>();
-            }
-
-            if (patchJson["byte_restore_pos"])
-            {
-                const std::string_view restorePosStr = patchJson["byte_restore_pos"].as<std::string_view>();
-                if (restorePosStr == "trailing")
-                    byteRestorePos = StolenByteRestorePos::Trailing;
-            }
-
 
             if (!SetupTrampolinePatch(patchASM, pPatchAddress, patchVA, sectionRemaining, bJumpBack, bKeepStolen, byteRestorePos))
             {
@@ -417,7 +401,6 @@ static bool AddImportEntry(LIEF::PE::Import& import_, const ryml::ConstNodeRef& 
     }
     else if (bNameNodeValid)
     {
-        const std::string name = entry["name"].as<std::string>();
         if (name.empty())
         {
             fprintf(stderr, "Empty name specified for entry\n");
@@ -545,7 +528,6 @@ static bool ProcessImportEdit(LIEF::PE::Binary& binary, const ryml::ConstNodeRef
         return false;
     }
 
-    const std::string moduleName = importDef["module"].as<std::string>();
     LIEF::PE::Import* pImport = binary.get_import(moduleName);
 
     if (!pImport)
@@ -569,8 +551,6 @@ static bool ProcessImportEdit(LIEF::PE::Binary& binary, const ryml::ConstNodeRef
             fprintf(stderr, "Import entry modification specified with no op\n");
             continue;
         }
-
-        std::string_view op = entry["op"].as<std::string_view>();
 
         if (op == "add")
         {
@@ -598,9 +578,7 @@ static bool ProcessImport(LIEF::PE::Binary& binary, const ryml::ConstNodeRef imp
     {
         return false;
     }
-
-    std::string_view mode = importDef["mode"].as<std::string_view>();
-
+    
     if (mode == "add")
     {
         return ProcessImportAdd(binary, importDef);
@@ -611,9 +589,8 @@ static bool ProcessImport(LIEF::PE::Binary& binary, const ryml::ConstNodeRef imp
         return ProcessImportEdit(binary, importDef);
     }
     
-        assert(0);
+    assert(0);
     return false;
-    }
 }
 
 static bool ProcessExportAdd(LIEF::PE::Binary& binary, const ryml::ConstNodeRef exportDef)
@@ -642,11 +619,11 @@ static bool ProcessExportAdd(LIEF::PE::Binary& binary, const ryml::ConstNodeRef 
         {
             fprintf(stderr, "No section name specified for new export entry\n");
             return false;
-    }
+        }
 
         std::string_view sigString;
         if (!YamlGetStringView(rva_sig, "sig", sigString))
-    {
+        {
             fprintf(stderr, "No sig specified for new export entry\n");
             return false;
         }
@@ -665,10 +642,10 @@ static bool ProcessExportAdd(LIEF::PE::Binary& binary, const ryml::ConstNodeRef 
         }
 
         std::span<const uint8_t> sectionData = pSection->writable_content();
-                
+
         const auto [bytes, mask] = PatternToMaskedBytes(sigString);
         const uint8_t* pAddress = FindPattern(sectionData, bytes, mask);
-        
+
         const uint32_t offset = static_cast<uint32_t>(pAddress - sectionData.data());
         rva = (uint32_t)pSection->virtual_address() + offset;
     }
@@ -714,8 +691,6 @@ static bool ProcessExport(LIEF::PE::Binary& binary, const ryml::ConstNodeRef exp
         fprintf(stderr, "Export operation has no op\n");
         return false;
     }
-
-    std::string_view op = exportDef["op"].as<std::string_view>();
 
     if (op == "add")
     {
@@ -775,14 +750,9 @@ static bool ProcessDataPatch(LIEF::PE::Binary& binary, const ryml::ConstNodeRef 
         {
             pPatchPoint[stringPatch.size()] = '\0';
         }
-
-        uint8_t* const pPatchPoint = &sectionSpan[offset];
-        std::memcpy(pPatchPoint, newString.c_str(), nBytesToCopy);
     }
     else if (YamlGetBytes(dataDef, "bytes", bytes))
-    {
-        std::vector<uint8_t> data = dataDef["bytes"].as<std::vector<uint8_t>>();
-    
+    {    
         uint8_t* pPatchPoint = &sectionSpan[offset];
         std::memcpy(pPatchPoint, bytes.data(), bytes.size());
     }
@@ -1018,8 +988,7 @@ int main(int argc, char** argv)
     }
 
     const std::unique_ptr<LIEF::PE::Binary> pe = LIEF::PE::Parser::parse(inputPath);
-    const YAML::Node patchFile = YAML::LoadFile(patchFilePath);
-
+    
     std::ifstream yamlFile = std::ifstream(patchFilePath, std::ios::in | std::ios::binary);
     if (!yamlFile || !yamlFile.good())
     {
@@ -1037,42 +1006,20 @@ int main(int argc, char** argv)
     CodePatchCtx patch_context(*pe);
 
     if (!ProcessImportsDef(tree, *pe))
-        {
+    {
         return EXIT_FAILURE;
-        }
     }
 
     if (!ProcessExportsDef(tree, *pe))
-        {
+    {
         return EXIT_FAILURE;
-        }
     }
 
     if (!ProcessSymbolsDef(tree, patch_context))
-            {
+    {
         return EXIT_FAILURE;
-            }
-        }
     }
 
-    for (auto& patch : m_InlinePatches) {
-        
-        const std::string_view patchOp = patch["type"].as<std::string_view>();
-
-        if (patchOp == "code") {
-            
-            if (!patch_context.SetupCodePatch(patch))
-            {
-                bPatchSuccessful = false;
-                printf("Code patch failed\n");
-                break;
-            }
-        }
-        else if (patchOp == "data") {
-            ProcessDataPatch(*pe, patch);
-        }
-    }
-    
     if (!ProcessPatchesDef(tree, patch_context))
     {
         return EXIT_FAILURE;
