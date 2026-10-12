@@ -42,8 +42,7 @@ set(LLVM_ENABLE_BACKTRACES OFF CACHE BOOL "" FORCE)
 set(LLVM_BUILD_RUNTIME OFF CACHE BOOL "" FORCE)
 add_subdirectory(thirdparty/keystone SYSTEM)
 
-set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
-add_subdirectory(thirdparty/yaml-cpp SYSTEM)
+add_subdirectory(thirdparty/rapidyaml SYSTEM)
 
 set(ZYDIS_BUILD_DOXYGEN OFF CACHE BOOL "" FORCE)
 add_subdirectory(thirdparty/zydis SYSTEM)
@@ -56,6 +55,7 @@ add_executable(BinPatch
     assembler.cpp
     dissasembler.h
     dissasembler.cpp
+    yaml_utils.h
 )
 
 target_compile_options(${PROJECT_NAME} PRIVATE
@@ -66,6 +66,6 @@ target_compile_options(${PROJECT_NAME} PRIVATE
 target_link_libraries(${PROJECT_NAME} PRIVATE
     LIEF::LIEF
     keystone
-    yaml-cpp
-    Zydis::Zydis    
+    Zydis::Zydis
+	ryml::ryml
 )

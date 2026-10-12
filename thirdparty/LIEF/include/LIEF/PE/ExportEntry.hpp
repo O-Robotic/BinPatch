@@ -68,6 +68,10 @@ class LIEF_API ExportEntry : public LIEF::Symbol {
     LIEF::Symbol(std::move(name)),
     address_(rva) {}
 
+  ExportEntry(std::string_view name, uint32_t rva) :
+    LIEF::Symbol(std::move(std::string(name))),
+    address_(rva) {}
+
   ExportEntry(const ExportEntry&) = default;
   ExportEntry& operator=(const ExportEntry&) = default;
 

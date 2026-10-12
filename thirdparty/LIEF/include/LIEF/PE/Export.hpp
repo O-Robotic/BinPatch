@@ -166,6 +166,7 @@ class LIEF_API Export : public Object {
 
   /// Find the export entry with the given name
   const ExportEntry* find_entry(const std::string& name) const LIEF_LIFETIMEBOUND;
+  const ExportEntry* find_entry(const std::string_view name) const LIEF_LIFETIMEBOUND;
 
   ExportEntry* find_entry(const std::string& name) LIEF_LIFETIMEBOUND {
     return const_cast<ExportEntry*>(
@@ -202,11 +203,16 @@ class LIEF_API Export : public Object {
   bool remove_entry(const ExportEntry& exp);
 
   /// Remove the export entry with the given name
-  bool remove_entry(const std::string& name) {
+  bool remove_entry(const std::string_view name) {
     if (const ExportEntry* entry = find_entry(name)) {
       return remove_entry(*entry);
     }
     return false;
+  }
+
+  /// Remove the export entry with the given name
+  bool remove_entry(const std::string& name) {
+    return remove_entry(name);
   }
 
   /// Remove the export entry with the given RVA

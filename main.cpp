@@ -20,8 +20,9 @@
 #include "LIEF/PE/Import.hpp"
 #include <inttypes.h>
 
-#include "thirdparty/yaml-cpp/include/yaml-cpp/yaml.h"
-#include <regex>
+#include <c4/base64.hpp>
+#include <ryml.hpp>
+#include "yaml_utils.h"
 
 #define BP_ALIGN_UP(val, align) (((val) + (align) - 1) & ~((align) - 1))
 
@@ -65,26 +66,45 @@ public:
     explicit CodePatchCtx(LIEF::PE::Binary& bin) : m_LoadedPE(bin) {
     }
 
-    bool SetupCodePatch(const YAML::Node& patchJson)
+    bool SetupCodePatch(const ryml::ConstNodeRef& patchJson)
     {
-        const std::string_view segmentName = patchJson["segment"].as<std::string_view>();
-        const std::string patchASM = patchJson["patch"].as<std::string>();
-        const std::string_view mode = patchJson["mode"].as<std::string_view>();
+        std::string_view segment;
+        std::string patchASM;
+        std::string_view mode;
+        std::string_view sig;
 
-        LIEF::PE::Section* section = nullptr;
-        for (auto& sectionItr : m_LoadedPE.sections()) {
-            if (sectionItr.name() == segmentName) {
-                section = &sectionItr;
-                break;
+        if (!YamlGetStringView(patchJson, "segment", segment) || segment.empty())
+        {
+            fprintf(stderr, "Invalid patch segment def\n");
+            return false;
             }
-        }
 
-        if (!section) {
-            std::cout << "Could not find section " << segmentName << std::endl;
+        if (!YamlGetString(patchJson, "patch", patchASM) || patchASM.empty())
+        {
+            fprintf(stderr, "Invalid patch def\n");
             return false;
         }
 
-        auto sectionData = section->writable_content();
+        if (!YamlGetStringView(patchJson, "mode", mode) || mode.empty())
+        {
+            fprintf(stderr, "Invalid mode def\n");
+            return false;
+        }
+
+        if (!YamlGetStringView(patchJson, "sig", sig) || sig.empty())
+        {
+            fprintf(stderr, "Invalid sig def\n");
+            return false;
+        }
+
+        LIEF::PE::Section* pSection = m_LoadedPE.get_section(segment);
+
+        if (!pSection) {
+            std::cout << "Could not find section " << segment << std::endl;
+            return false;
+        }
+
+        auto sectionData = pSection->writable_content();
 
         const uint8_t* pPatchAddress = nullptr;
         if (patchJson["sig"]) {
@@ -94,7 +114,7 @@ public:
 
             if (!pPatchAddress)
             {
-                std::cout << std::format("Could not find pattern [{}] in segment {}", sig, segmentName) << std::endl;
+            std::cout << std::format("Could not find pattern [{}] in segment {}", sig, segment) << std::endl;
                 return false;
             }
             else
@@ -103,12 +123,13 @@ public:
             }
         }
 
+
         if (!pPatchAddress) {
             return false;
         }
 
         const uint64_t offset = static_cast<uint64_t>(pPatchAddress - sectionData.data());
-        const uint64_t patchVA = m_LoadedPE.imagebase() + section->virtual_address() + offset;
+        const uint64_t patchVA = m_LoadedPE.imagebase() + pSection->virtual_address() + offset;
         const size_t sectionRemaining = sectionData.size() - offset;
 
         if (mode == "replace")
@@ -121,13 +142,15 @@ public:
         }
         else if (mode == "insert")
         {
-            bool bJumpBack = true;
-            bool bKeepStolen = true;
+            bool bJumpBack = YamlGetBool(patchJson, "jump_back", true);
+            bool bKeepStolen = YamlGetBool(patchJson, "keep_stolen", true);
             StolenByteRestorePos byteRestorePos = StolenByteRestorePos::Leading;
 
-            if (patchJson["jump_back"])
+            std::string_view byteRestorePosStr;
+            if (YamlGetStringView(patchJson, "byte_restore_pos", byteRestorePosStr))
             {
-                bJumpBack = patchJson["jump_back"].as<bool>();
+                if(byteRestorePosStr == "trailing") {
+                    byteRestorePos = StolenByteRestorePos::Trailing;
             }
 
             if (patchJson["keep_stolen"])
@@ -362,64 +385,76 @@ private:
     uint64_t m_nEstimatedCaveSize = 0;
 };
 
-static void AddImportEntry(LIEF::PE::Import& import_, const YAML::Node& entry)
-{
-    const bool bHasOrdinal = entry.contains("ordinal");
-    const bool bHasName = entry.contains("name");
 
-    if (bHasOrdinal == bHasName)
+
+static bool AddImportEntry(LIEF::PE::Import& import_, const ryml::ConstNodeRef& entry)
+{
+    if (!entry.is_map())
+        return false;
+
+    uint16_t ordinal;
+    std::string_view name;
+    bool bOrdinalNodeValid = YamlGetNumeric(entry, "ordinal", ordinal);
+    bool bNameNodeValid = YamlGetStringView(entry, "name", name);
+
+    if (bOrdinalNodeValid == bNameNodeValid)
     {
         fprintf(stderr, "Import definition must have either a name or ordinal\n");
-        return;
+        return false;
     }
 
-    if (bHasOrdinal)
+    if (bOrdinalNodeValid)
     {
-        const uint32_t ordinal = entry["ordinal"].as<uint32_t>();
-
-        if (ordinal < 1 || ordinal > UINT16_MAX)
+        if (ordinal < 1)
         {
             fprintf(stderr, "Invalid ordinal specified for entry %" PRIu32 "\n", ordinal);
-            return;
+            return false;
         }
 
         printf("Adding import entry with ordinal %" PRIu32 "\n", ordinal);
         LIEF::PE::ImportEntry importEntry((1ull << 63) | ordinal, LIEF::PE::PE_TYPE::PE32_PLUS);
         import_.add_entry(importEntry);
     }
-    else
+    else if (bNameNodeValid)
     {
         const std::string name = entry["name"].as<std::string>();
         if (name.empty())
         {
             fprintf(stderr, "Empty name specified for entry\n");
-            return;
+            return false;
         }
 
-        printf("Adding import entry with name %s\n", name.c_str());
+        printf("Adding import entry with name %.*s\n", static_cast<int>(name.length()), name.data());
         import_.add_entry(name);
     }
+
+    return true;
 }
 
-static void RemoveImportEntry(LIEF::PE::Import& import_, const YAML::Node& entry)
+static bool RemoveImportEntry(LIEF::PE::Import& import_, ryml::ConstNodeRef entry)
 {
-    const bool bHasOrdinal = entry.contains("ordinal");
-    const bool bHasName = entry.contains("name");
+    const bool bHasOrdinal = entry.has_child("ordinal");
+    const bool bHasName = entry.has_child("name");
 
     if (bHasOrdinal == bHasName)
     {
         fprintf(stderr, "Import definition must have either a name or ordinal\n");
-        return;
+        return false;
     }
 
     if (bHasOrdinal)
     {
-        const uint32_t ordinal = entry["ordinal"].as<uint32_t>();
+        uint32_t ordinal;
+        if (!YamlGetNumeric(entry, "ordinal", ordinal))
+        {
+            fprintf(stderr, "Invalid ordinal specified\n");
+            return false;
+        }
 
         if (ordinal < 1 || ordinal > UINT16_MAX)
         {
-            fprintf(stderr, "Invalid ordinal specified for entry %" PRIu32 "\n", ordinal);
-            return;
+            fprintf(stderr, "Invalid ordinal specified %" PRIu32 "\n", ordinal);
+            return false;
         }
 
         if (import_.remove_entry(ordinal))
@@ -429,65 +464,85 @@ static void RemoveImportEntry(LIEF::PE::Import& import_, const YAML::Node& entry
         else
         {
             printf("Failed to remove import entry with ordinal %" PRIu32 "\n", ordinal);
+            return false;
         }
     }
     else
     {
-        const std::string name = entry["name"].as<std::string>();
+        std::string_view name;
+        if (!YamlGetStringView(entry, "name", name))
+        {
+            fprintf(stderr, "Invalid Name specified for import removal\n");
+            return false;
+        }
 
         if (name.empty())
         {
             fprintf(stderr, "Empty name specified for entry\n");
-            return;
+            return false;
         }
 
         if (import_.remove_entry(name))
         {
-            printf("Removed import entry with name %s\n", name.c_str());
+            printf("Removed import entry with name %.*s\n", static_cast<int>(name.length()), name.data());
         }
         else
         {
-            printf("Failed to remove import entry with name %s\n", name.c_str());
+            printf("Failed to remove import entry with name %.*s\n", static_cast<int>(name.length()), name.data());
+            return false;
         }
     }
+
+    return true;
 }
 
-static void ProcessImportAdd(LIEF::PE::Binary& binary, const YAML::Node& importDef)
+static bool ProcessImportAdd(LIEF::PE::Binary& binary, const ryml::ConstNodeRef importDef)
 {
-    if (!importDef.contains("module"))
+    if (!importDef.is_map())
+    {
+        fprintf(stderr, "Import definition must be a map\n");
+        return false;
+    }
+
+    std::string_view moduleName;
+    if (!YamlGetStringView(importDef, "module", moduleName))
     {
         fprintf(stderr, "No module specified for adding an import\n");
-        return;
+        return false;
     }
 
-    if (!importDef.contains("entries") && importDef["entries"].IsSequence())
+    const ryml::ConstNodeRef entries = importDef.find_child("entries");
+    if (entries.invalid() || !entries.is_seq())
     {
         fprintf(stderr, "Import definition must have at least one entry\n");
-        return;
+        return false;
     }
 
-    const std::string module_name = importDef["module"].as<std::string>();
-    printf("Adding import %s\n", module_name.c_str());
-    LIEF::PE::Import& new_import = binary.add_import(module_name);
+    printf("Adding import %.*s\n", static_cast<int>(moduleName.length()), moduleName.data());
+    LIEF::PE::Import& new_import = binary.add_import(moduleName);
 
-    for (const auto& entry : importDef["entries"])
+    for (const ryml::ConstNodeRef entry : entries.children())
     {
-        AddImportEntry(new_import, entry);
+        if (!AddImportEntry(new_import, entry))
+            return false;
     }
+
+    return true;
 }
 
-static void ProcessImportEdit(LIEF::PE::Binary& binary, const YAML::Node& importDef)
+static bool ProcessImportEdit(LIEF::PE::Binary& binary, const ryml::ConstNodeRef importDef)
 {
-    if (!importDef.contains("module"))
+    std::string_view moduleName;
+    if (!YamlGetStringView(importDef, "module", moduleName))
     {
         fprintf(stderr, "No module specified for modifying an import\n");
-        return;
+        return false;
     }
 
-    if (importDef.contains("remove") && importDef["remove"].as<bool>())
+    if (YamlGetBool(importDef, "remove", false))
     {
-        binary.remove_import(importDef["module"].as<std::string>());
-        return;
+        binary.remove_import(moduleName);
+        return false;
     }
 
     const std::string moduleName = importDef["module"].as<std::string>();
@@ -495,19 +550,21 @@ static void ProcessImportEdit(LIEF::PE::Binary& binary, const YAML::Node& import
 
     if (!pImport)
     {
-        fprintf(stderr, "No import exists for module %s\n", moduleName.c_str());
-        return;
+        fprintf(stderr, "No import exists for module %.*s\n", static_cast<int>(moduleName.length()), moduleName.data());
+        return false;
     }
 
-    if (!importDef.contains("entries"))
+    ryml::ConstNodeRef entries = importDef.find_child("entries");
+    if (entries.invalid() || !entries.is_seq() || !entries.num_children())
     {
         fprintf(stderr, "Import modification must have at least one entry\n");
-        return;
+        return false;
     }
 
-    for (const auto& entry : importDef["entries"])
+    for (const auto& entry : entries.children())
     {
-        if (!entry.contains("op"))
+        std::string_view op;
+        if (!YamlGetStringView(entry, "op", op))
         {
             fprintf(stderr, "Import entry modification specified with no op\n");
             continue;
@@ -517,79 +574,94 @@ static void ProcessImportEdit(LIEF::PE::Binary& binary, const YAML::Node& import
 
         if (op == "add")
         {
-            AddImportEntry(*pImport, entry);
+            if (!AddImportEntry(*pImport, entry))
+                return false;
         }
         else if (op == "remove")
         {
-            RemoveImportEntry(*pImport, entry);
+            if (!RemoveImportEntry(*pImport, entry))
+                return false;
         }
         else
         {
             assert(0);
         }
     }
+
+    return true;
 }
 
-static void ProcessImport(LIEF::PE::Binary& binary, const YAML::Node& importDef)
+static bool ProcessImport(LIEF::PE::Binary& binary, const ryml::ConstNodeRef importDef)
 {
-    if (!importDef.contains("mode"))
+    std::string_view mode;
+    if (!YamlGetStringView(importDef, "mode", mode))
     {
-        fprintf(stderr, "Import operation has no mode\n");
-        return;
+        return false;
     }
 
     std::string_view mode = importDef["mode"].as<std::string_view>();
 
     if (mode == "add")
     {
-        ProcessImportAdd(binary, importDef);
+        return ProcessImportAdd(binary, importDef);
     }
-    else if(mode == "edit")
+    
+    if(mode == "edit")
     {
-        ProcessImportEdit(binary, importDef);
+        return ProcessImportEdit(binary, importDef);
     }
-    else
-    {
+    
         assert(0);
+    return false;
     }
 }
 
-static void ProcessExportAdd(LIEF::PE::Binary& binary, const YAML::Node& exportDef)
+static bool ProcessExportAdd(LIEF::PE::Binary& binary, const ryml::ConstNodeRef exportDef)
 {
-    const bool bOrdinalSpecified = exportDef.contains("ordinal");
-    const bool bNameSpecified = exportDef.contains("name");
+    std::string_view name;
+    uint16_t ordinal;
+
+    const bool bOrdinalSpecified = YamlGetNumeric(exportDef, "ordinal", ordinal);
+    const bool bNameSpecified = YamlGetStringView(exportDef, "name", name);
 
     if (bOrdinalSpecified == bNameSpecified)
     {
         fprintf(stderr, "Export add must have either a name or ordinal\n");
-        return;
+        return false;
     }
 
     LIEF::PE::Export* pExports;
 
     uint32_t rva = 0;
+    ryml::ConstNodeRef rva_sig;
 
-    if (exportDef.contains("rva"))
+    if (YamlGetMap(exportDef, "rva_sig", rva_sig))
     {
-        rva = exportDef["rva"].as<uint32_t>();
+        std::string_view sectionName;
+        if (!YamlGetStringView(rva_sig, "section", sectionName))
+        {
+            fprintf(stderr, "No section name specified for new export entry\n");
+            return false;
     }
-    else if (exportDef.contains("rva_sig"))
+
+        std::string_view sigString;
+        if (!YamlGetStringView(rva_sig, "sig", sigString))
     {
-        const YAML::Node& rva_sig_node = exportDef["rva_sig"];
-        const std::string sectionName = rva_sig_node["section"].as<std::string>();
-        const std::string_view sigString = rva_sig_node["sig"].as<std::string_view>();
+            fprintf(stderr, "No sig specified for new export entry\n");
+            return false;
+        }
 
         if (sectionName.empty() || sigString.empty())
         {
             fprintf(stderr, "Bad rva_sig definition for export\n");
-            return;
+            return false;
         }
 
         LIEF::PE::Section* pSection = binary.get_section(sectionName);
         if (!pSection)
         {
             fprintf(stderr, "Section specified in rva_sig definition for export not found\n");
-            return;
+            return false;
         }
 
         std::span<const uint8_t> sectionData = pSection->writable_content();
@@ -600,10 +672,10 @@ static void ProcessExportAdd(LIEF::PE::Binary& binary, const YAML::Node& exportD
         const uint32_t offset = static_cast<uint32_t>(pAddress - sectionData.data());
         rva = (uint32_t)pSection->virtual_address() + offset;
     }
-    else
+    else if (!YamlGetNumeric(exportDef, "rva", rva))
     {
         fprintf(stderr, "Export entry must have RVA info\n");
-        return;
+        return false;
     }
 
     if (binary.has_exports())
@@ -619,83 +691,103 @@ static void ProcessExportAdd(LIEF::PE::Binary& binary, const YAML::Node& exportD
 
     if (bNameSpecified)
     {
-        std::string exportName = exportDef["name"].as<std::string>();
-        printf("Adding export: Name: %s RVA: 0x%10" PRIX32 "\n", exportName.c_str(), rva);
-        pExports->add_entry(LIEF::PE::ExportEntry(exportName, rva));
+        printf("Adding export: Name: %.*s RVA: 0x%08" PRIX32 "\n", static_cast<int>(name.length()), name.data(), rva);
+        pExports->add_entry(LIEF::PE::ExportEntry(name, rva));
     }
     else
     {
-        uint16_t ordinal = exportDef["ordinal"].as<uint16_t>();
-        printf("Adding export: Ordinal: %hu RVA: 0x%10" PRIX32 "\n", ordinal, rva);
+        printf("Adding export: Ordinal: %hu RVA: 0x%08" PRIX32 "\n", ordinal, rva);
         LIEF::PE::ExportEntry exportEntry;
         exportEntry.ordinal(ordinal);
         exportEntry.address(rva);
         pExports->add_entry(exportEntry);
     }
+
+    return true;
 }
 
-static void ProcessExport(LIEF::PE::Binary& binary, const YAML::Node& exportDef)
+static bool ProcessExport(LIEF::PE::Binary& binary, const ryml::ConstNodeRef exportDef)
 {
-    if (!exportDef.contains("op"))
+    std::string_view op;
+    if (!YamlGetStringView(exportDef, "op", op))
     {
         fprintf(stderr, "Export operation has no op\n");
-        return;
+        return false;
     }
 
     std::string_view op = exportDef["op"].as<std::string_view>();
 
     if (op == "add")
     {
-        ProcessExportAdd(binary, exportDef);
+        if (!ProcessExportAdd(binary, exportDef))
+            return false;
     }
     else
     {
         assert(0);
     }
+
+    return true;
 }
 
-static void ProcessDataPatch(LIEF::PE::Binary& binary, const YAML::Node& dataDef)
+static bool ProcessDataPatch(LIEF::PE::Binary& binary, const ryml::ConstNodeRef dataDef)
 {
-    const bool bHasStringPatch = dataDef.contains("string");
-    std::string section = dataDef["section"].as<std::string>();
-    size_t offset = dataDef["offset"].as<size_t>();
+    std::string_view stringPatch;
+    std::string_view section;
+    uint64_t offset;
+    const bool bHasStringPatch = YamlGetStringView(dataDef, "string", stringPatch);
+
+    if (!YamlGetStringView(dataDef, "section", section))
+    {
+        fprintf(stderr, "Failed to get section name for data patch\n");
+        return false;
+    }
+
+    if (!YamlGetNumeric(dataDef, "offset", offset))
+    {
+        fprintf(stderr, "Failed to get offset for data patch\n");
+        return false;
+    }
 
     LIEF::PE::Section* pSection = binary.get_section(section);
     if (!pSection)
     {
-        fprintf(stderr, "Could not find section %s for data patch\n", section.c_str());
-        return;
+        fprintf(stderr, "Could not find section %.*s for data patch\n", static_cast<int>(section.length()), section.data());
+        return false;
     }
 
     auto sectionSpan = pSection->writable_content();
-
+    std::vector<uint8_t> bytes;
     if (bHasStringPatch)
     {
-        bool bNullTerminate = true;
-        if (dataDef.contains("nullterm") && !dataDef["nullterm"].as<bool>())
+        const bool bNullTerminate = YamlGetBool(dataDef, "nullterm", true);
+
+        const size_t nPatchSize = bNullTerminate ? stringPatch.size() + 1 : stringPatch.size();
+        if (offset + nPatchSize > sectionSpan.size())
         {
-            bNullTerminate = false;
+            fprintf(stderr, "Bad offset for section %.*s, section size is %zu offset was %zu\n", static_cast<int>(section.length()), section.data(), pSection->size(), offset);
+            return false;
         }
 
-        const std::string newString = dataDef["string"].as<std::string>();
-        const size_t nBytesToCopy = bNullTerminate ? newString.size() + 1 : newString.size();
-
-        if (offset + nBytesToCopy > sectionSpan.size())
+        uint8_t* const pPatchPoint = &sectionSpan[offset];
+        std::memcpy(pPatchPoint, stringPatch.data(), stringPatch.size());
+        if (bNullTerminate)
         {
-            fprintf(stderr, "Bad offset for section %s, section size is %zu offset was %zu\n", section.c_str(), section.size(), offset);
-            return;
+            pPatchPoint[stringPatch.size()] = '\0';
         }
 
         uint8_t* const pPatchPoint = &sectionSpan[offset];
         std::memcpy(pPatchPoint, newString.c_str(), nBytesToCopy);
     }
-    else if (dataDef["bytes"])
+    else if (YamlGetBytes(dataDef, "bytes", bytes))
     {
         std::vector<uint8_t> data = dataDef["bytes"].as<std::vector<uint8_t>>();
     
         uint8_t* pPatchPoint = &sectionSpan[offset];
-        std::memcpy(pPatchPoint, data.data(), data.size());
+        std::memcpy(pPatchPoint, bytes.data(), bytes.size());
     }
+
+    return true;
 }
 
 static bool UpdateChecksumOnDisk(const std::string& path, uint32_t checksum) {
@@ -721,6 +813,137 @@ static bool UpdateChecksumOnDisk(const std::string& path, uint32_t checksum) {
 
     return true;
 }
+
+static bool ProcessImportsDef(ryml::Tree& tree, LIEF::PE::Binary& pe)
+{
+    const ryml::ConstNodeRef imports = tree.crootref().find_child("imports");
+    
+    if (imports.invalid() || (imports.has_val() && imports.val_is_null()))
+        return true;
+
+    if (!imports.is_seq()) {
+        fprintf(stderr, "Invalid imports block\n");
+        return false;
+    }
+
+    if (imports.num_children() == 0)
+        return true;
+
+    for (const ryml::ConstNodeRef import : imports)
+    {
+        if (!ProcessImport(pe, import))
+            return false;
+    }
+
+    return true;
+}
+
+static bool ProcessExportsDef(ryml::Tree& tree, LIEF::PE::Binary& pe)
+{
+    const ryml::ConstNodeRef exports = tree.crootref().find_child("exports");
+    if (exports.invalid())
+        return true;
+
+    if (!exports.is_map())
+        return false;
+
+    if (!YamlGetBool(exports, "clear", false)) {
+        if (pe.has_exports())
+        {
+            LIEF::PE::Export exportTable;
+            pe.set_export(exportTable);
+        }
+    }
+
+    ryml::ConstNodeRef exportEntries = exports.find_child("entries");
+
+    if (exportEntries.invalid() || (exportEntries.has_val() && exportEntries.val_is_null()))
+        return true;
+
+    if (!exportEntries.is_seq())
+        return false;
+
+    if (exportEntries.num_children() == 0)
+        return true;
+
+    for (const ryml::ConstNodeRef exportEntry : exportEntries.children())
+    {
+        ProcessExport(pe, exportEntry);
+    }
+
+    return true;
+}
+
+static bool ProcessSymbolsDef(ryml::Tree& tree, CodePatchCtx& patchCtx)
+{
+    const ryml::ConstNodeRef symbols = tree.crootref().find_child("symbols");
+    if (symbols.invalid() || (symbols.has_val() && symbols.val_is_null()))
+        return true;
+    if (!symbols.is_map())
+        return false;
+    if (symbols.num_children() == 0)
+        return true;
+
+    for (const ryml::ConstNodeRef symbol : symbols.children())
+    {
+        std::string symbolname(symbol.key().str, symbol.key().len);
+        uint64_t val;
+        if (!ryml::from_chars(symbol.val(), &val))
+        {
+            printf("Failed to read symbol %.*s value\n", static_cast<int>(symbolname.length()), symbolname.data());
+            return false;
+        }
+
+        if (patchCtx.RegisterSymbol(std::move(symbolname), val))
+        {
+            printf("Adding symbol %.*s value 0x%010" PRIX64 "\n", static_cast<int>(symbol.key().len), symbol.key().str, val);
+        }
+        else
+        {
+            printf("Failed to register symbol %.*s\n", static_cast<int>(symbol.key().len), symbol.key().str);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool ProcessPatchesDef(ryml::Tree& tree, CodePatchCtx& ctx)
+{
+    ryml::ConstNodeRef patches = tree.crootref().find_child("patches");
+
+    if (patches.invalid())
+        return true;
+
+    if (!patches.is_seq())
+        return false;
+
+    if (patches.num_children() == 0)
+        return true;
+
+    for (const ryml::ConstNodeRef patch : patches.children())
+    {
+        std::string_view patchType;
+        if (!YamlGetStringView(patch, "type", patchType))
+        {
+            fprintf(stderr, "Bad patch definition missing / invalid type\n");
+            return false;
+        }
+
+        if (patchType == "code")
+        {
+            if (!ctx.SetupCodePatch(patch))
+                return false;
+        }
+        else if (patchType == "data") {
+            if (!ProcessDataPatch(ctx.Binary(), patch))
+                return false;
+        }
+    }
+
+    return true;
+}
+
 
 int main(int argc, char** argv) 
 {
@@ -797,60 +1020,37 @@ int main(int argc, char** argv)
     const std::unique_ptr<LIEF::PE::Binary> pe = LIEF::PE::Parser::parse(inputPath);
     const YAML::Node patchFile = YAML::LoadFile(patchFilePath);
 
-    if (!patchFile["patches"] || !patchFile["patches"].IsSequence())
+    std::ifstream yamlFile = std::ifstream(patchFilePath, std::ios::in | std::ios::binary);
+    if (!yamlFile || !yamlFile.good())
     {
-        fprintf(stderr, "Invalid patch file, missing patch sequence\n");
+        fprintf(stderr, "Failed to open patch yaml\n");
         return EXIT_FAILURE;
     }
 
-    const YAML::Node m_InlinePatches = patchFile["patches"];
+    size_t yamlSize = std::filesystem::file_size(patchFilePath);
+    char* fileBuffer = new char[yamlSize + 1];
+    yamlFile.read(fileBuffer, yamlSize);
+    fileBuffer[yamlSize] = '\0';
+    ryml::Tree tree = ryml::parse_in_arena(ryml::to_csubstr(fileBuffer));
+    delete[] fileBuffer;
 
     CodePatchCtx patch_context(*pe);
 
-    if (patchFile.contains("imports") && patchFile["imports"].IsSequence())
-    {
-        for (const auto& import : patchFile["imports"])
+    if (!ProcessImportsDef(tree, *pe))
         {
-            ProcessImport(*pe, import);
+        return EXIT_FAILURE;
         }
     }
 
-    if (patchFile.contains("exports") && patchFile["exports"].IsMap())
-    {
-        const YAML::Node& exports = patchFile["exports"];
-
-        if (exports["clear"])
+    if (!ProcessExportsDef(tree, *pe))
         {
-            if (pe->has_exports())
-            {
-                LIEF::PE::Export exportTable;
-                pe->set_export(exportTable);
-            }
-        }
-
-        for (const auto& export_ : exports["entries"])
-        {
-            ProcessExport(*pe, export_);
+        return EXIT_FAILURE;
         }
     }
 
-    bool bPatchSuccessful = true; 
-
-
-    if (patchFile.contains("symbols") && patchFile["symbols"].IsMap())
-    {
-        const YAML::Node symbols = patchFile["symbols"];
-        for (const auto& symbol : symbols)
-        {
-            const std::string& symbolName = symbol.first.Scalar();
-            uint64_t symbolValue = symbol.second.as<uint64_t>();
-            if (!patch_context.RegisterSymbol(symbolName, symbolValue))
+    if (!ProcessSymbolsDef(tree, patch_context))
             {
-                printf("Failed to register symbol %s\n", symbolName.c_str());
-            }
-            else
-            {
-                printf("Adding symbol %s value %" PRIX64 "\n", symbolName.c_str(), symbolValue);
+        return EXIT_FAILURE;
             }
         }
     }
@@ -873,8 +1073,10 @@ int main(int argc, char** argv)
         }
     }
     
-    if (!bPatchSuccessful)
+    if (!ProcessPatchesDef(tree, patch_context))
+    {
         return EXIT_FAILURE;
+    }
 
     if (!patch_context.ApplyPatches())
     {

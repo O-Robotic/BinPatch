@@ -82,6 +82,10 @@ Import& Import::operator=(const Import& other) {
 }
 
 bool Import::remove_entry(const std::string& name) {
+  return remove_entry(std::string_view(name));
+}
+
+bool Import::remove_entry(const std::string_view name) {
   auto it = std::find_if(entries_.begin(), entries_.end(),
                          [&name](const std::unique_ptr<ImportEntry>& entry) {
                            return entry->name() == name;

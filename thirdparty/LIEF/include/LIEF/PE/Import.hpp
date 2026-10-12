@@ -52,6 +52,8 @@ class LIEF_API Import : public Object {
   Import(const details::pe_import& import);
   Import(std::string name) :
     name_(std::move(name)) {}
+  Import(std::string_view name) :
+    name_(name) {}
   Import() = default;
   ~Import() override = default;
 
@@ -161,10 +163,17 @@ class LIEF_API Import : public Object {
     return *entries_.back();
   }
 
+  /// Add a new import entry with the given name (i.e. an imported function)
+  ImportEntry& add_entry(const std::string_view name) LIEF_LIFETIMEBOUND {
+    entries_.emplace_back(new ImportEntry(std::move(std::string(name))));
+    return *entries_.back();
+  }
+
   /// Remove the import entry with the given name.
   ///
   /// Return true if the deletion succeeded, false otherwise
   bool remove_entry(const std::string& name);
+  bool remove_entry(const std::string_view name);
 
   /// Remove the import entry with the given ordinal number
   ///

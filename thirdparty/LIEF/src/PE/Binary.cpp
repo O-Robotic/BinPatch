@@ -313,6 +313,10 @@ LIEF::Binary::sections_t Binary::get_abstract_sections() {
 
 
 const Section* Binary::get_section(const std::string& name) const {
+  return get_section(std::string_view(name));
+}
+
+const Section* Binary::get_section(const std::string_view name) const {
   const auto section_it =
       std::find_if(sections_.begin(), sections_.end(),
                    [&name](const std::unique_ptr<Section>& section) {
@@ -324,7 +328,6 @@ const Section* Binary::get_section(const std::string& name) const {
   }
   return section_it->get();
 }
-
 
 const Section* Binary::import_section() const {
   if (!has_imports()) {
@@ -557,10 +560,38 @@ bool Binary::remove_import(const std::string& name) {
   return true;
 }
 
+bool Binary::remove_import(const std::string_view name) {
+  auto it = std::find_if(imports_.begin(), imports_.end(),
+                         [name](const std::unique_ptr<Import>& imp) {
+                           return imp->name() == name;
+                         });
+
+  if (it == imports_.end()) {
+    return false;
+  }
+
+  imports_.erase(it);
+  return true;
+}
+
 const Import* Binary::get_import(const std::string& import_name) const {
   const auto it_import =
       std::find_if(imports_.begin(), imports_.end(),
                    [&import_name](const std::unique_ptr<Import>& import) {
+                     return import->name() == import_name;
+                   });
+
+  if (it_import == imports_.end()) {
+    return nullptr;
+  }
+
+  return &**it_import;
+}
+
+const Import* Binary::get_import(const std::string_view import_name) const {
+  const auto it_import =
+      std::find_if(imports_.begin(), imports_.end(),
+                   [import_name](const std::unique_ptr<Import>& import) {
                      return import->name() == import_name;
                    });
 

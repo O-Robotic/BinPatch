@@ -458,7 +458,15 @@ class LIEF_API Binary : public LIEF::Binary {
         static_cast<const Binary*>(this)->get_section(name)
     );
   }
+
+  Section* get_section(const std::string_view name) LIEF_LIFETIMEBOUND {
+    return const_cast<Section*>(
+        static_cast<const Binary*>(this)->get_section(name)
+    );
+  }
+
   const Section* get_section(const std::string& name) const LIEF_LIFETIMEBOUND;
+  const Section* get_section(const std::string_view name) const LIEF_LIFETIMEBOUND;
 
   /// Return the section associated with import table or a
   /// nullptr if the binary does not have an import table
@@ -622,8 +630,17 @@ class LIEF_API Binary : public LIEF::Binary {
     );
   }
 
+  Import* get_import(const std::string_view import_name) LIEF_LIFETIMEBOUND {
+    return const_cast<Import*>(
+        static_cast<const Binary*>(this)->get_import(import_name)
+    );
+  }
+
   const Import*
       get_import(const std::string& import_name) const LIEF_LIFETIMEBOUND;
+
+  const Import*
+      get_import(const std::string_view import_name) const LIEF_LIFETIMEBOUND;
 
   /// `True` if the binary imports the given library name
   bool has_import(const std::string& import_name) const {
@@ -675,10 +692,21 @@ class LIEF_API Binary : public LIEF::Binary {
                              std::make_unique<Import>(name));
   }
 
+  Import& add_import(std::string_view name,
+                     int32_t pos = -1) LIEF_LIFETIMEBOUND {
+    if (pos < 0 || (size_t)pos >= imports_.size()) {
+      imports_.push_back(std::make_unique<Import>(name));
+      return *imports_.back();
+    }
+    return **imports_.insert(imports_.begin() + pos,
+                             std::make_unique<Import>(name));
+  }
+
   /// Remove the imported library with the given `name`
   ///
   /// Return true if the deletion succeeded, false otherwise.
   bool remove_import(const std::string& name);
+  bool remove_import(const std::string_view name);
 
   /// Remove all libraries in the binary
   void remove_all_imports() {
