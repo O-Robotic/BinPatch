@@ -1,36 +1,49 @@
 #include "pattern_utils.h"
-#include <immintrin.h>
-#include <assert.h>
+#include <charconv>
 
 std::pair<std::vector<uint8_t>, std::vector<uint8_t>> PatternToMaskedBytes(const std::string_view input)
 {
     std::vector<uint8_t> vBytes;
     std::vector<uint8_t> vMask;
 
-    const char* const pszPatternEnd = input.data() + input.length();
+    const size_t inputLen = input.length();
+    size_t i = 0;
 
-    for (const char* pszCurrentByte = input.data(); pszCurrentByte < pszPatternEnd; ++pszCurrentByte)
+    while (i < inputLen)
     {
-        if (*pszCurrentByte == '?')
-        {
-            ++pszCurrentByte;
+        const char c = input[i];
 
-            if (*pszCurrentByte == '?')
-            {
-                ++pszCurrentByte;
+        if (c == ' ')
+        {
+            i++;
+            continue;
+        }
+
+        if (c == '?') {
+            i++;
+            if (i < inputLen && input[i] == '?') {
+                i++;
             }
 
             vBytes.push_back(0);
-            vMask.push_back(0x00);
+            vMask.push_back(0x0);
+            continue;
         }
-        else
-        {
-            vBytes.push_back(static_cast<uint8_t>(strtoul(pszCurrentByte, const_cast<char**>(&pszCurrentByte), 16)));
-            vMask.push_back(0xFF);
-        }
+
+        const char* pFirst = input.data() + i;
+        const char* pLast = input.data() + std::min(i + 2, inputLen);
+
+        uint32_t value;
+        const std::from_chars_result result = std::from_chars(pFirst, pLast, value, 16);
+        if (result.ec != std::errc{} || result.ptr == pFirst)
+            return {};
+
+        vBytes.push_back(static_cast<uint8_t>(value));
+        vMask.push_back(0xFF);
+        i += result.ptr - pFirst;
     }
 
-    return std::make_pair(vBytes, vMask);
+    return { std::move(vBytes), std::move(vMask) };
 };
 
 const uint8_t* FindPattern(std::span<const uint8_t> data, const std::vector<uint8_t>& vPatternBytes,
