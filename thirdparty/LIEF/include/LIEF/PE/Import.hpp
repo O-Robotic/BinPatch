@@ -165,7 +165,7 @@ class LIEF_API Import : public Object {
 
   /// Add a new import entry with the given name (i.e. an imported function)
   ImportEntry& add_entry(const std::string_view name) LIEF_LIFETIMEBOUND {
-    entries_.emplace_back(new ImportEntry(std::move(std::string(name))));
+    entries_.emplace_back(new ImportEntry(std::string(name)));
     return *entries_.back();
   }
 

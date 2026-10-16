@@ -114,16 +114,9 @@ public:
             std::cout << std::format("Could not find pattern [{}] in segment {}", sig, segment) << std::endl;
             return false;
         }
-        else
-        {
-            std::cout << std::format("Building code patch for [{}]", sig) << std::endl;
-        }
         
-
-        if (!pPatchAddress) {
-            return false;
-        }
-
+        std::cout << std::format("Building code patch for [{}]", sig) << std::endl;
+        
         const uint64_t offset = static_cast<uint64_t>(pPatchAddress - sectionData.data());
         const uint64_t patchVA = m_LoadedPE.imagebase() + pSection->virtual_address() + offset;
         const size_t sectionRemaining = sectionData.size() - offset;
@@ -913,7 +906,6 @@ static bool ProcessPatchesDef(ryml::Tree& tree, CodePatchCtx& ctx)
 
     return true;
 }
-
 
 int main(int argc, char** argv) 
 {
