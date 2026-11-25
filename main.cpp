@@ -62,7 +62,18 @@ static LIEF::PE::Section* AllocateCaveSection(LIEF::PE::Binary& binary, size_t t
 struct CodePatchCtx
 {
 public:
-    explicit CodePatchCtx(LIEF::PE::Binary& bin) : m_LoadedPE(bin) {
+    explicit CodePatchCtx(std::unique_ptr<LIEF::PE::Binary>& bin) : m_LoadedPE(bin) {
+    }
+
+    void CommitExecutableChanges()
+    {
+        LIEF::PE::Builder::config_t config;
+        config.imports = true;
+        config.exports = true;
+        LIEF::PE::Builder builder(*m_LoadedPE, config);
+        builder.build();
+        const std::vector<uint8_t>& build = builder.get_build();
+        m_LoadedPE = LIEF::PE::Parser::parse(build);
     }
 
     bool SetupCodePatch(const ryml::ConstNodeRef& patchJson)
@@ -96,7 +107,7 @@ public:
             return false;
         }
 
-        LIEF::PE::Section* pSection = m_LoadedPE.get_section(segment);
+        LIEF::PE::Section* pSection = m_LoadedPE->get_section(segment);
 
         if (!pSection) {
             std::cout << "Could not find section " << segment << std::endl;
@@ -118,7 +129,7 @@ public:
         std::cout << std::format("Building code patch for [{}]", sig) << std::endl;
         
         const uint64_t offset = static_cast<uint64_t>(pPatchAddress - sectionData.data());
-        const uint64_t patchVA = m_LoadedPE.imagebase() + pSection->virtual_address() + offset;
+        const uint64_t patchVA = m_LoadedPE->imagebase() + pSection->virtual_address() + offset;
         const size_t sectionRemaining = sectionData.size() - offset;
 
         if (mode == "replace")
@@ -235,13 +246,13 @@ public:
         return true;
     }
 
-    inline LIEF::PE::Binary& Binary() { return m_LoadedPE; }
+    inline LIEF::PE::Binary& Binary() { return *m_LoadedPE; }
 
     bool ApplyInlinePatches() const
     {
         for (auto& patch : m_InlinePatches)
         {
-            m_LoadedPE.patch_address(patch.m_nPatchVA, patch.m_PatchBytes, LIEF::Binary::VA_TYPES::VA);
+            m_LoadedPE->patch_address(patch.m_nPatchVA, patch.m_PatchBytes, LIEF::Binary::VA_TYPES::VA);
         }
 
         return true;
@@ -253,8 +264,8 @@ public:
             return true;
 
         //Rough estimate of the size since after relocation the size might change
-        LIEF::PE::Section* caveSection = AllocateCaveSection(m_LoadedPE, m_nEstimatedCaveSize);
-        const uint64_t caveBaseVA = m_LoadedPE.imagebase() + caveSection->virtual_address();
+        LIEF::PE::Section* caveSection = AllocateCaveSection(*m_LoadedPE, m_nEstimatedCaveSize);
+        const uint64_t caveBaseVA = m_LoadedPE->imagebase() + caveSection->virtual_address();
 
         auto writableSpan = caveSection->writable_content();
         size_t nCaveOffset = 0;
@@ -332,7 +343,7 @@ public:
             jumpOut[0] = 0xE9;
             const int32_t outRel = static_cast<int32_t>(caveVA - (patch.m_nPatchVA + 5));
             memcpy(&jumpOut[1], &outRel, sizeof(outRel));
-            m_LoadedPE.patch_address(patch.m_nPatchVA, jumpOut);
+            m_LoadedPE->patch_address(patch.m_nPatchVA, jumpOut);
         }
 
         return true;
@@ -354,7 +365,7 @@ public:
     }
 
 private:
-    LIEF::PE::Binary& m_LoadedPE;
+    std::unique_ptr<LIEF::PE::Binary>& m_LoadedPE;
     std::vector<CodePatch> m_InlinePatches;
     std::vector<TrampolinePatch> m_TrampolinePatches;
     Disassembler m_Dissasembler;
@@ -518,7 +529,7 @@ static bool ProcessImportEdit(LIEF::PE::Binary& binary, const ryml::ConstNodeRef
     if (YamlGetBool(importDef, "remove", false))
     {
         binary.remove_import(moduleName);
-        return false;
+        return true;
     }
 
     LIEF::PE::Import* pImport = binary.get_import(moduleName);
@@ -868,6 +879,17 @@ static bool ProcessSymbolsDef(ryml::Tree& tree, CodePatchCtx& patchCtx)
         }
     }
 
+    
+    for (const LIEF::PE::Import& import_ : patchCtx.Binary().imports())
+    {
+        for (const auto& importEntry : import_.entries())
+        {
+            const std::string_view entryName = importEntry.name();
+            const uint64_t symbolAddress = patchCtx.Binary().optional_header().imagebase() + importEntry.iat_address();
+            patchCtx.RegisterSymbol(std::string(entryName), symbolAddress);
+        }
+    }
+
     return true;
 }
 
@@ -979,7 +1001,7 @@ int main(int argc, char** argv)
         return EXIT_FAILURE;
     }
 
-    const std::unique_ptr<LIEF::PE::Binary> pe = LIEF::PE::Parser::parse(inputPath);
+    std::unique_ptr<LIEF::PE::Binary> pe = LIEF::PE::Parser::parse(inputPath);
     
     std::ifstream yamlFile = std::ifstream(patchFilePath, std::ios::in | std::ios::binary);
     if (!yamlFile || !yamlFile.good())
@@ -995,7 +1017,7 @@ int main(int argc, char** argv)
     ryml::Tree tree = ryml::parse_in_arena(ryml::to_csubstr(fileBuffer));
     delete[] fileBuffer;
 
-    CodePatchCtx patch_context(*pe);
+    CodePatchCtx patch_context(pe);
 
     if (!ProcessImportsDef(tree, *pe))
     {
@@ -1006,6 +1028,8 @@ int main(int argc, char** argv)
     {
         return EXIT_FAILURE;
     }
+
+    patch_context.CommitExecutableChanges();
 
     if (!ProcessSymbolsDef(tree, patch_context))
     {
