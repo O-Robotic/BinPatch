@@ -821,7 +821,7 @@ static bool ProcessExportsDef(ryml::Tree& tree, LIEF::PE::Binary& pe)
     if (!exports.is_map())
         return false;
 
-    if (!YamlGetBool(exports, "clear", false)) {
+    if (YamlGetBool(exports, "clear", false)) {
         if (pe.has_exports())
         {
             LIEF::PE::Export exportTable;
